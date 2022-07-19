@@ -61,7 +61,7 @@ def TypeOf(opcode: Op):
     return NotImplementedError
 
 def decode_ins(x, type: Type):
-    assert x >= 0 and x < 2 ** (XLEN - 1)
+    assert x >= 0 and x <= 2 ** (XLEN) - 1
 
     opcode  = get_bits(6, 0, x)
     
