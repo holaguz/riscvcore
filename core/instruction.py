@@ -77,7 +77,7 @@ BGE     = Instruction(opcode = 0b1100011,   type = Instruction.Type.B, funct3 = 
 BLTU    = Instruction(opcode = 0b1100011,   type = Instruction.Type.B, funct3 = 0b110)
 BGEU    = Instruction(opcode = 0b1100011,   type = Instruction.Type.B, funct3 = 0b111)
 
-ins_lup = [LUI, AUIPC, JAL]
+ins_lup = [LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU]
 
 
 if __name__ == '__main__':
