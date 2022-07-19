@@ -5,6 +5,8 @@ from enum import Enum
 import glob
 from elftools.elf.elffile import ELFFile
 
+from instruction import Instruction
+
 # reminder cuz dumb:
 # char:     1 byte
 # int32:    4 bytes
@@ -22,7 +24,6 @@ class Op(Enum):
     IMMEDIATE   = 0b0010011
     ECALL       = 0b1110011
     BRANCH      = 0b1100011
-
     LUI         = 0b0110111 # load upper immediate
     AUIPC       = 0b0010111 # add upper immediate to PC
 
@@ -35,8 +36,21 @@ class Funct3(Enum):
     ORI     = 0b110
     ANDI    = 0b111
 
+    SLLI    = 0b001
+    SRLI    = 0b101
+    # SRAI    = 0b001
+
     # branch
     BNE     = 0b001
+
+class Funct7(Enum):
+
+    SLLI    = 0b0000000
+    SRLI    = 0b0000000
+    SRAI    = 0b0100000
+
+    ADD     = 0b0000000
+
 class Type(Enum):
     R = 0
     I = 1
@@ -56,6 +70,7 @@ def TypeOf(opcode: Op):
         return Type.B
 
     if opcode in [Op.AUIPC, Op.LUI]:
+        print(f'{opcode} is type U')
         return Type.U
 
     return NotImplementedError
@@ -63,31 +78,37 @@ def TypeOf(opcode: Op):
 def decode_ins(x, type: Type):
     assert x >= 0 and x <= 2 ** (XLEN) - 1
 
-    opcode  = get_bits(6, 0, x)
-    
+    opcode  = gb(6, 0, x)
+
     if type == Type.J:
-        rd      = get_bits(11, 7, x)
-        imm     = get_bits(31, 31, x) << 19 | get_bits(30, 21, x) << 1 | get_bits(20, 20, x) << 10 | get_bits(19, 12, x) << 11
+        rd      = gb(11, 7, x)
+        imm     = gb(31, 31, x) << 19 | gb(30, 21, x) << 1 | gb(20, 20, x) << 10 | gb(19, 12, x) << 11
         return opcode, rd, imm
     if type == Type.I:
-        rd      = get_bits(11, 7, x)
-        funct3  = get_bits(14, 12, x)
-        rs1     = get_bits(19, 15, x)
-        imm     = get_bits(31, 20, x)
+        rd      = gb(11, 7, x)
+        funct3  = gb(14, 12, x)
+        rs1     = gb(19, 15, x)
+        imm     = gb(31, 20, x)
         return opcode, rd, funct3, rs1, imm
     if type == Type.B:
-        funct3  = get_bits(14, 12, x)
-        rs1     = get_bits(19, 15, x)
-        rs2     = get_bits(24, 20, x)
-        imm     = get_bits(31, 31, x) << 12 | get_bits(30, 25, x) << 10 | get_bits(11, 8, x) << 4 | get_bits(7, 7, x) << 11
+        funct3  = gb(14, 12, x)
+        rs1     = gb(19, 15, x)
+        rs2     = gb(24, 20, x)
+        imm     = gb(31, 31, x) << 12 | gb(30, 25, x) << 10 | gb(11, 8, x) << 4 | gb(7, 7, x) << 11
         return opcode, funct3, rs1, rs2, imm
     if type == Type.U:
-        rd = get_bits(11, 7, x)
-        imm = get_bits(31, 12, x)
+        rd      = gb(11, 7, x)
+        imm     = gb(31, 12, x)
         return opcode, rd, imm
+    if type == Type.R:
+        rd      = gb(11, 7, x)
+        funct3  = gb(12, 14, x)
+        rs1     = gb(19, 15, x)
+        rs2     = gb(24, 20, x)
+        funct7  = gb(31, 25, x)
+        return opcode, rd, funct3, rs1, rs2, funct7
     print(f"can't decode {type} -- not implemented")
     assert False
-
 
 def reset():
     global mem, regfile
@@ -144,28 +165,28 @@ def sign_extend(x, l):
     else:
         return x
 
-def get_bits(r:int, l: int, x: int):
+def gb(r:int, l: int, x: int):
     # assert x < 0x80000000
-    assert l <= r and l >= 0 and r <= 31
+    # assert l <= r and l >= 0 and r <= 31
     x = x >> l
     x = x & (2**(r - l + 1) - 1)
     return x
 
-u = 0b00110111
-assert get_bits(0, 0, u) == 0b1
-assert get_bits(1, 0, u) == 0b11
-assert get_bits(2, 0, u) == 0b111
 
-assert get_bits(7, 0, u) == u
-assert get_bits(7, 4, u) == 0b0011
-assert get_bits(6, 3, u) == 0b110
+u = 0b00110111
+assert gb(0, 0, u) == 0b1
+assert gb(1, 0, u) == 0b11
+assert gb(2, 0, u) == 0b111
+
+assert gb(7, 0, u) == u
+assert gb(7, 4, u) == 0b0011
+assert gb(6, 3, u) == 0b110
 
 def step() -> bool:
-    ins = 0
-    opcode = 0
     try:
+        # instruction fetch
         ins = r32(regfile[PC])
-        opcode = get_bits(6, 0, ins)
+        opcode = gb(6, 0, ins)
         print(f'Instruction is {ins:08x}, opcode is {opcode:07b}')
         opcode = Op(opcode)
         type = TypeOf(opcode)
@@ -192,9 +213,10 @@ def step() -> bool:
                 if funct3 == Funct3.ADDI:
                     regfile[rs1] = regfile[rs1] + sign_extend(imm, XLEN)
                 else:
-                    raise Exception("dont know funct3")
+                    raise Exception(f"dont know funct3 {funct3}")
             else:
                 raise Exception('dont know {opcode:07b}')
+
         elif type == Type.B:
             _, funct3, rs1, rs2, imm = decode_ins(ins, Type.B)
             print(opcode, funct3, rs1, rs2, imm)
@@ -206,8 +228,7 @@ def step() -> bool:
                 raise Exception('dont know {opcode:07b}')
 
         elif type == Type.U:
-            _ , rd, imm = decode_ins(ins, Type.U)
-            print(opcode, rd, imm)
+            _, rd, imm = decode_ins(ins, Type.U)
 
             if opcode == Op.AUIPC:
                 regfile[rd] = imm << 12 + regfile[PC]
@@ -216,6 +237,7 @@ def step() -> bool:
                 val = imm << 12 & 0xFFFFFFFF
                 print('val')
                 regfile[rd] 
+
             else:
                 raise Exception('dont know {opcode:07b}')
 
@@ -223,6 +245,7 @@ def step() -> bool:
             raise Exception("type not implemented")
 
     except Exception as e:
+        print(e)
         dump_reg()
         return False
 
@@ -230,7 +253,8 @@ def step() -> bool:
     return True
 
 if __name__ == "__main__":
-    for x in glob.glob('../riscv-tests/isa/rv32ui-*'):
+    for x in glob.glob('../isa/rv32ui-p-add'):
+        print(x)
         if x.endswith('dump'):
             continue
         print(x)
@@ -243,5 +267,5 @@ if __name__ == "__main__":
             inscount = 0
             while step():
                 inscount += 1
-            print("  end after %d instructions" % inscount)
+            print(f"{x} end after {inscount} instructions")
         break

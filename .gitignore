@@ -3,3 +3,4 @@ Makefrag
 Makefile
 *.h
 riscv-tests
+__pycache__
