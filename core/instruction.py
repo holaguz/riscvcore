@@ -19,6 +19,7 @@ class Instruction():
         B=4
         U=5
         J=6
+        WEIRDI=7
 
     def gb(l: int, r: int, x: int):
         assert l >= r and r >= 0 and l <= 31, f'assertion failed in gb: l:{l} r:{r}'
@@ -30,8 +31,8 @@ class Instruction():
     def __init__(self, opcode, type: Type = None, funct3 = None, funct7 = None, rd = None, rs1 = None, rs2 = None, imm = None):
         self.type   = type
         self.opcode = opcode
-        self.funct3 = funct3
         self.funct7 = funct7
+        self.funct3 = funct3
         self.imm    = imm
         self.rs1    = rs1
         self.rs2    = rs2
@@ -42,7 +43,7 @@ class Instruction():
 
     def __repr__(self) -> str:
         return str(
-            [f'{k}: {v:07b}' for k, v in self.__dict__.items() if v is not None]
+            [f'{k}: {v%(1<<32):07b}' for k, v in self.__dict__.items() if v is not None]
         )
 
     def __eq__(self, other):
@@ -69,7 +70,6 @@ class Instruction():
             if opcode == istr.opcode.value:
                 if opcode != Opcode.IMMEDIATE:
                     ins = i.value
-                    print('found %s' % i.name)
                     break
                 elif opcode == Opcode.IMMEDIATE:
                     # match funct3
@@ -77,13 +77,10 @@ class Instruction():
                         if funct3 == any([0b101, 0b001]):
                             if funct7 == istr.funct7:
                                 ins = i.value
-                                print('found %s' % i.name)
                                 break
                         else:
                             ins = i.value
-                            print('found %s' % i.name)
                             break
-                        
 
         if ins is None:
             raise Exception(f"opcode {opcode:07b} not found\n instruction was {istring:b}")
@@ -95,7 +92,7 @@ class Instruction():
             ret = Instruction(opcode = opcode, imm = imm, rd = rd)
 
         elif ins.type == Instruction.Type.U:
-            imm = gb(31, 12, istring) << 12
+            imm = gb(31, 12, istring)# << 12
             ret = Instruction(opcode = opcode, imm = imm, rd = rd)
 
         elif ins.type == Instruction.Type.B:
@@ -110,6 +107,10 @@ class Instruction():
         elif ins.type == Instruction.Type.I:
             imm = sign_extend(gb(31, 20, istring), 12)
             ret = Instruction(opcode=opcode, rd=rd, funct3=funct3, rs1=rs1, imm=imm)
+        
+        elif ins.type == Instruction.Type.WEIRDI:
+            imm = sign_extend(gb(31, 20, istring), 12)
+            ret = Instruction(opcode=opcode, rd=rd, funct3=funct3, funct7=funct7, rs1=rs1, imm=imm)
 
         elif ins.type == Instruction.Type.R:
             ret = Instruction(opcode=opcode, rd=rd, funct3=funct3, rs1=rs1, rs2=rs2, funct7=funct7)
@@ -156,9 +157,11 @@ class Ins(Enum):
     XORI    = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.I, funct3 = 0b100)
     ORI     = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.I, funct3 = 0b110)
     ANDI    = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.I, funct3 = 0b111)
-    SLLI    = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.I, funct3 = 0b001, funct7=0b0000000)
-    SRLI    = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.I, funct3 = 0b101, funct7=0b0000000)
-    SRAI    = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.I, funct3 = 0b101, funct7=0b0100000)
+
+    # Weird I
+    SLLI    = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.WEIRDI, funct3 = 0b001, funct7=0b0000000)
+    SRLI    = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.WEIRDI, funct3 = 0b101, funct7=0b0000000)
+    SRAI    = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.WEIRDI, funct3 = 0b101, funct7=0b0100000)
 
     # system, control status registers
     FENCE   = Instruction(opcode = Opcode.FENCE,  type=Instruction.Type.I, funct3 = 0b000)

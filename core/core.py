@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import glob
 import struct
+import os
 from enum import Enum
 from elftools.elf.elffile import ELFFile
 
@@ -16,7 +17,7 @@ import ipdb
 # 0x80000000 is 2147483648 == 2**31
 
 mem = regfile = None
-memsize = 1024 * 8  # 8 kB
+memsize = 1024 * 16  # 8 kB
 PC = 32
 XLEN = 32  # width of the registers
 
@@ -28,7 +29,7 @@ class Regfile():
         return self.registers[key]
 
     def __setitem__(self, key, value):
-        if key == 0: return # a0 register, always is zero
+        if key == 0: return # a0 register, always is zero]
         self.registers[key] = value & 0xFFFFFFFF
 
 def reset():
@@ -62,7 +63,7 @@ def w32(addr, dat):
 
     d, l = len(dat), len(mem)
     mem = mem[0:addr] + dat + mem[addr + d:]
-    assert(len(mem) == l)
+    assert len(mem) == l
 
 def dump_reg():
     regnames = ['zero', 'ra', 'sp', 'gp', 'tp', 't0', 't1', 't2', 's0', 's1'] + \
@@ -90,16 +91,14 @@ def dump_mem():
             print(f'\n0x{4*i:04x}:')
         print(f'{word:08x} ', end='\n' if i % 8 == 7 else '')
 
-def step() -> bool:
+STOP_AT = os.environ.get('D')
 
+def step() -> bool:
     # instruction fetch
     istr = r32(regfile[PC])
     ins = Instruction.decode(istr)
     imm, rd, rs1, rs2 = ins.imm, ins.rd, ins.rs1, ins.rs2
     funct3, funct7 = ins.funct3, ins.funct7
-
-    # if regfile[PC] == 0x80000128:
-    #     pass
 
     if ins is None:
         raise Exception('dont know this instruction', ins)
@@ -107,24 +106,28 @@ def step() -> bool:
     #instruction name
     try:
         name = [x for x in Ins if ins == x][0].name
-        print(f'{regfile[PC]:08x}, {name}, {ins}')
+        # print(f'{regfile[PC]:08x}, {name}, {ins}')
     except:
+        # print(f'{regfile[PC]:08x}, unknown, {ins}')
         pass
+
+    if str(hex(regfile[PC])) == STOP_AT:
+        ipdb.set_trace()
 
     #### not implemented instructions ####
     if ins.opcode == Opcode.SYSTEM:
         if ins == Ins.ECALL:
-            pass
-            print(f'ECALL: {regfile[PC]:08x}, {regfile[3]}')
+            # print(f'ECALL: {regfile[PC]:08x}, {regfile[3]}')
             if regfile[3] > 1:
                 raise Exception("test fail")
             elif regfile[3] == 1:
-                print('pass')
+                print('pass\t', end = '')
                 return False    # test pass
             else:
                 pass
         else:
-            print(f'{name} not implemented')
+            pass
+            # print(f'{name} not implemented')
 
     elif ins == Ins.FENCE:
         pass
@@ -134,15 +137,16 @@ def step() -> bool:
         if rd == 0:
             regfile[rd] = regfile[PC] + 4
             regfile[PC] += imm
-            print(f'new pc is {regfile[PC]:08x}')
+            # print(f'new pc is {regfile[PC]:08x}')
             return True
         else:
             raise Exception("cant decode JAL", ins)
     elif ins == Ins.LUI:
-        regfile[rd] = (imm << 12) & 0xFFFFF000
+        regfile[rd] = (imm << 12)
+        regfile[rd] &= 0xFFFFF000
     elif ins == Ins.AUIPC:
         # regfile[rd] = regfile[PC] + (imm << 12) & 0xFFFFF000
-        regfile[PC] += (imm << 12)
+        regfile[PC] = regfile[PC] + (imm << 12)
     elif ins.opcode == Opcode.BRANCH:
         do_branch = False
         if ins == Ins.BEQ:
@@ -161,31 +165,44 @@ def step() -> bool:
             raise Exception('branch not implemented')
         if do_branch:
             regfile[PC] += imm
-            print(f'new pc: {regfile[PC]:08x}')
 
     #### immediate instructions ####
     elif ins.opcode == Opcode.IMMEDIATE:
-        shamt = imm & 0x3F
+        shamt = imm & 0x1F
         if ins == Ins.ADDI:
-            regfile[rd] = (sign_extend(imm, 32) + regfile[rs1])
-        elif ins.opcode == Ins.SLLI.value.opcode:
-            regfile[rs1] = regfile[rd] << shamt
-        elif ins.opcode == Ins.SRLI.value.opcode and ins.funct7 == Ins.SRLI.value.funct7:
-            regfile[rs1] = regfile[rd] >> shamt
-        elif ins.opcode == Ins.SRAI.value.opcode and ins.funct7 == Ins.SRAI.value.funct7:
-            sign = regfile[rd] & (1 << 32)
-            regfile[rs1] = ((regfile[rd] & 0x7FFFFFFF) >> shamt) | sign
+            regfile[rd] = imm + regfile[rs1]
+        elif ins == Ins.ORI:
+            regfile[rd] = imm | regfile[rs1]
+        elif ins == Ins.ANDI:
+            regfile[rd] = imm & regfile[rs1]
+        elif ins == Ins.XORI:
+            regfile[rd] = imm ^ regfile[rs1]
+        elif ins == Ins.SLLI:
+            regfile[rd] = (regfile[rs1] << shamt)
+        elif ins == Ins.SRLI:
+            regfile[rd] = (regfile[rs1] >> shamt)
+        elif ins == Ins.SRAI:
+            sign = regfile[rs1] >> 31
+            out = regfile[rs1] >> shamt
+            out |= (0xFFFFFFFF * sign)<<(32-shamt)
+            regfile[rd] = out
         else:
             raise Exception(f"funct3 {funct3:3b} not implemented")
 
     #### arithmetic instructions ####
     elif ins.opcode == Opcode.ARITH:
         a, b = regfile[rs1], regfile[rs2]
-        ret  = 0
+        ret = 0
         if ins == Ins.ADD:
             ret = a + b
+        elif ins == Ins.AND:
+            ret = a & b
+        # elif ins == Ins.OR:
+        #     ret = a | b
+        # elif ins == Ins.XOR:
+        #     ret = a ^ b
         else:
-            print('not implemented!')
+            raise Exception('not implemented!')
         regfile[rd] = ret
 
     else:
@@ -196,11 +213,9 @@ def step() -> bool:
 
 
 if __name__ == "__main__":
-    for x in glob.glob('../isa/rv32ui-p-add'):
-        print(x)
-        if x.endswith('dump'):
+    for x in glob.glob('../isa/rv32ui-p-*'):
+        if x.endswith(('dump', 'fence_i')):
             continue
-        print(x)
         with open(x, 'rb') as f:
             reset()
             e = ELFFile(f)
@@ -212,8 +227,9 @@ if __name__ == "__main__":
                 while step():
                     inscount += 1
             except Exception as e:
-                print('--- EXCEPTION ---')
-                print(e)
-                dump_reg()
+                # print('--- EXCEPTION ---')
+                # print(x, e)
+                # dump_reg()
+                # exit(0)
+                pass
             print(f"{x} end after {inscount} instructions")
-        break
