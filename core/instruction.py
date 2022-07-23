@@ -53,7 +53,7 @@ class Instruction():
         return self.opcode == other.opcode and self.funct3 == other.funct3 and self.funct7 == other.funct7
 
     def decode(istring: int) -> 'Instruction':
-        assert istring < 2**32, 'decode out of bounds'
+        assert istring <= (1<<32) - 1, 'decode out of bounds'
         gb = Instruction.gb
 
         ret     = None
@@ -85,7 +85,6 @@ class Instruction():
         if ins is None:
             raise Exception(f"opcode {opcode:07b} not found\n instruction was {istring:b}")
 
-
         if ins.type == Instruction.Type.J:
             imm = gb(31, 31, istring) << 20 | gb(30, 21, istring) << 1 | gb(20, 20, istring) << 11 | gb(19, 12, istring) << 12
             imm = sign_extend(imm, 21)
@@ -96,7 +95,7 @@ class Instruction():
             ret = Instruction(opcode = opcode, imm = imm, rd = rd)
 
         elif ins.type == Instruction.Type.B:
-            imm = gb(11, 8, istring) << 1 | gb(30, 25, istring) << 5 | gb(7,7,istring) << 11 | gb(31,31,istring) << 12
+            imm = gb(31, 31, istring) << 12 | gb(30, 25, istring) << 5 | gb(11,8,istring)<<1 | gb(7,7,istring)<<11
             imm = sign_extend(imm, 13)
             ret = Instruction(opcode=opcode, imm=imm, rs1=rs1, rs2=rs2, funct3=funct3)
 

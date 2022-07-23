@@ -39,7 +39,7 @@ def reset():
     regfile = Regfile()
     regfile[PC] = 0x80000000
 
-def r32(addr):
+def r32(addr) -> int:
     global mem
     addr -= 0x80000000
     if addr % 4 != 0:
@@ -117,7 +117,7 @@ def step() -> bool:
     #### not implemented instructions ####
     if ins.opcode == Opcode.SYSTEM:
         if ins == Ins.ECALL:
-            # print(f'ECALL: {regfile[PC]:08x}, {regfile[3]}')
+            print(f'ECALL: {regfile[PC]:08x}, {regfile[3]}')
             if regfile[3] > 1:
                 raise Exception("test fail")
             elif regfile[3] == 1:
@@ -134,13 +134,10 @@ def step() -> bool:
 
     #### branch instructions ####
     elif ins == Ins.JAL:
-        if rd == 0:
             regfile[rd] = regfile[PC] + 4
             regfile[PC] += imm
             # print(f'new pc is {regfile[PC]:08x}')
-            return True
-        else:
-            raise Exception("cant decode JAL", ins)
+            # return True
     elif ins == Ins.LUI:
         regfile[rd] = (imm << 12)
         regfile[rd] &= 0xFFFFF000
@@ -148,25 +145,27 @@ def step() -> bool:
         # regfile[rd] = regfile[PC] + (imm << 12) & 0xFFFFF000
         regfile[PC] = regfile[PC] + (imm << 12)
     elif ins.opcode == Opcode.BRANCH:
-        do_branch = False
+        b = False
         if ins == Ins.BEQ:
-            do_branch = regfile[rs1] == regfile[rs2]
+            b = regfile[rs1] == regfile[rs2]
         elif ins == Ins.BNE:
-            do_branch = regfile[rs1] != regfile[rs2]
+            b = regfile[rs1] != regfile[rs2]
         elif ins == Ins.BLT:
-            do_branch = sign_extend(regfile[rs1],32) < sign_extend(regfile[rs2],32)
+            b = sign_extend(regfile[rs1],32) < sign_extend(regfile[rs2],32)
         elif ins == Ins.BGE:
-            do_branch = sign_extend(regfile[rs1],32) >= sign_extend(regfile[rs2],32)
+            b = sign_extend(regfile[rs1],32) >= sign_extend(regfile[rs2],32)
         elif ins == Ins.BLTU:
-            do_branch = regfile[rs1] < regfile[rs2]
+            b = regfile[rs1] < regfile[rs2]
         elif ins == Ins.BGEU:
-            do_branch = regfile[rs1] >= regfile[rs2]
+            b = regfile[rs1] >= regfile[rs2]
         else:
             raise Exception('branch not implemented')
-        if do_branch:
+        if b:
             regfile[PC] += imm
+            return True
 
     #### immediate instructions ####
+
     elif ins.opcode == Opcode.IMMEDIATE:
         shamt = imm & 0x1F
         if ins == Ins.ADDI:
@@ -197,10 +196,10 @@ def step() -> bool:
             ret = a + b
         elif ins == Ins.AND:
             ret = a & b
-        # elif ins == Ins.OR:
-        #     ret = a | b
-        # elif ins == Ins.XOR:
-        #     ret = a ^ b
+        elif ins == Ins.OR:
+            ret = a | b
+        elif ins == Ins.XOR:
+            ret = a ^ b
         else:
             raise Exception('not implemented!')
         regfile[rd] = ret
@@ -228,8 +227,7 @@ if __name__ == "__main__":
                     inscount += 1
             except Exception as e:
                 # print('--- EXCEPTION ---')
-                # print(x, e)
-                # dump_reg()
-                # exit(0)
-                pass
+                print(x, e)
+                dump_reg()
+                exit(0)
             print(f"{x} end after {inscount} instructions")
