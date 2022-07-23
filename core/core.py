@@ -1,11 +1,12 @@
 #!/usr/bin/python3
-from base64 import decode
+import glob
 import struct
 from enum import Enum
-import glob
 from elftools.elf.elffile import ELFFile
 
-from instruction import Instruction
+from instruction import Ins, Instruction, Opcode, sign_extend
+
+import ipdb
 
 # reminder cuz dumb:
 # char:     1 byte
@@ -15,106 +16,26 @@ from instruction import Instruction
 # 0x80000000 is 2147483648 == 2**31
 
 mem = regfile = None
-memsize = 1024 * 8 # 8 kB
+memsize = 1024 * 8  # 8 kB
 PC = 32
-XLEN = 32 # width of the registers
+XLEN = 32  # width of the registers
 
-class Op(Enum):
-    JAL         = 0b1101111
-    IMMEDIATE   = 0b0010011
-    ECALL       = 0b1110011
-    BRANCH      = 0b1100011
-    LUI         = 0b0110111 # load upper immediate
-    AUIPC       = 0b0010111 # add upper immediate to PC
+class Regfile():
+    def __init__(self):
+        self.registers = [0] * 33
 
-class Funct3(Enum):
-    # immediate
-    ADDI    = 0b000
-    SLTI    = 0b010
-    SLTIU   = 0b011
-    XORI    = 0b100
-    ORI     = 0b110
-    ANDI    = 0b111
+    def __getitem__(self, key):
+        return self.registers[key]
 
-    SLLI    = 0b001
-    SRLI    = 0b101
-    # SRAI    = 0b001
-
-    # branch
-    BNE     = 0b001
-
-class Funct7(Enum):
-
-    SLLI    = 0b0000000
-    SRLI    = 0b0000000
-    SRAI    = 0b0100000
-
-    ADD     = 0b0000000
-
-class Type(Enum):
-    R = 0
-    I = 1
-    S = 2
-    B = 3
-    U = 4
-    J = 5
-
-def TypeOf(opcode: Op):
-    if opcode in [Op.JAL]:
-        return Type.J
-
-    if opcode in [Op.IMMEDIATE]:
-        return Type.I
-
-    if opcode in [Op.BRANCH]:
-        return Type.B
-
-    if opcode in [Op.AUIPC, Op.LUI]:
-        print(f'{opcode} is type U')
-        return Type.U
-
-    return NotImplementedError
-
-def decode_ins(x, type: Type):
-    assert x >= 0 and x <= 2 ** (XLEN) - 1
-
-    opcode  = gb(6, 0, x)
-
-    if type == Type.J:
-        rd      = gb(11, 7, x)
-        imm     = gb(31, 31, x) << 19 | gb(30, 21, x) << 1 | gb(20, 20, x) << 10 | gb(19, 12, x) << 11
-        return opcode, rd, imm
-    if type == Type.I:
-        rd      = gb(11, 7, x)
-        funct3  = gb(14, 12, x)
-        rs1     = gb(19, 15, x)
-        imm     = gb(31, 20, x)
-        return opcode, rd, funct3, rs1, imm
-    if type == Type.B:
-        funct3  = gb(14, 12, x)
-        rs1     = gb(19, 15, x)
-        rs2     = gb(24, 20, x)
-        imm     = gb(31, 31, x) << 12 | gb(30, 25, x) << 10 | gb(11, 8, x) << 4 | gb(7, 7, x) << 11
-        return opcode, funct3, rs1, rs2, imm
-    if type == Type.U:
-        rd      = gb(11, 7, x)
-        imm     = gb(31, 12, x)
-        return opcode, rd, imm
-    if type == Type.R:
-        rd      = gb(11, 7, x)
-        funct3  = gb(12, 14, x)
-        rs1     = gb(19, 15, x)
-        rs2     = gb(24, 20, x)
-        funct7  = gb(31, 25, x)
-        return opcode, rd, funct3, rs1, rs2, funct7
-    print(f"can't decode {type} -- not implemented")
-    assert False
+    def __setitem__(self, key, value):
+        if key == 0: return # a0 register, always is zero
+        self.registers[key] = value & 0xFFFFFFFF
 
 def reset():
     global mem, regfile
     mem = b'\x00' * (memsize)
     # regfile = {i: b'\x00'*4 for i in range(0, 32)}
-    regfile = {i: 0 for i in range(0, 32)}
+    regfile = Regfile()
     regfile[PC] = 0x80000000
 
 def r32(addr):
@@ -127,8 +48,11 @@ def r32(addr):
 
 def w32(addr, dat):
     global mem
-    if addr >= 0x80000000:
+
+    if(addr):
         addr -= 0x80000000
+
+    assert addr >= 0 and addr <= len(mem) - 0x4
     if(addr < 0 or addr >= len(mem)):
         raise Exception(f"out of bound exception: can't access {addr}")
 
@@ -141,116 +65,135 @@ def w32(addr, dat):
     assert(len(mem) == l)
 
 def dump_reg():
-    print(f'\nPC: {regfile[PC]:04x}', end = '')
-    if len(mem) < regfile[PC]:
-        h = regfile[PC]
-        print(f" (which is {r32(h):08x})")
-    else:
-        print()
+    regnames = ['zero', 'ra', 'sp', 'gp', 'tp', 't0', 't1', 't2', 's0', 's1'] + \
+        [f'a{i}' for i in range(0, 8)] + \
+        [f's{i}' for i in range(2, 12)] + \
+        [f't{i}' for i in range(3, 7)]
+
+    print(f'\nPC: {regfile[PC]:08x}', end='')
+
+    h = regfile[PC]
+    print(f" (which is {r32(h):08x})")
 
     for i in range(0, 32):
-        if i % 4 == 0: print()
-        regname, val = f'x{i}', regfile[i]
-        print(f"{regname}: \t{val:08x}", end = '\t')
+        if i % 4 == 0:
+            print()
+        name = regnames[i]
+        val = regfile[i]
+        print(f"{name}: \t{val:08x}", end='\t')
+    print()
 
 def dump_mem():
     for i in range(len(mem) // 4):
         word = struct.unpack("<I", mem[i:i+4])[0]
-        if 4*i % 0x80 == 0: print(f'\n0x{4*i:04x}:')
-        print(f'{word:08x} ', end = '\n' if i%8 == 7 else '')
-
-def sign_extend(x, l):
-    if x >> (l-1) == 1:
-        return -((1 << l) - x)
-    else:
-        return x
-
-def gb(r:int, l: int, x: int):
-    # assert x < 0x80000000
-    # assert l <= r and l >= 0 and r <= 31
-    x = x >> l
-    x = x & (2**(r - l + 1) - 1)
-    return x
-
-
-u = 0b00110111
-assert gb(0, 0, u) == 0b1
-assert gb(1, 0, u) == 0b11
-assert gb(2, 0, u) == 0b111
-
-assert gb(7, 0, u) == u
-assert gb(7, 4, u) == 0b0011
-assert gb(6, 3, u) == 0b110
+        if 4*i % 0x80 == 0:
+            print(f'\n0x{4*i:04x}:')
+        print(f'{word:08x} ', end='\n' if i % 8 == 7 else '')
 
 def step() -> bool:
+
+    # instruction fetch
+    istr = r32(regfile[PC])
+    ins = Instruction.decode(istr)
+    imm, rd, rs1, rs2 = ins.imm, ins.rd, ins.rs1, ins.rs2
+    funct3, funct7 = ins.funct3, ins.funct7
+
+    # if regfile[PC] == 0x80000128:
+    #     pass
+
+    if ins is None:
+        raise Exception('dont know this instruction', ins)
+
+    #instruction name
     try:
-        # instruction fetch
-        ins = r32(regfile[PC])
-        opcode = gb(6, 0, ins)
-        print(f'Instruction is {ins:08x}, opcode is {opcode:07b}')
-        opcode = Op(opcode)
-        type = TypeOf(opcode)
+        name = [x for x in Ins if ins == x][0].name
+        print(f'{regfile[PC]:08x}, {name}, {ins}')
+    except:
+        pass
 
-        if opcode == Op.ECALL:
-            print("ECALL not implemented, continuing")
-            regfile[PC] += 0x4
-            return True
-
-        if type == Type.J:
-            _, rd, imm = decode_ins(ins, Type.J)
-            # imm = sign_extend(imm, 32)
-            if opcode == Op.JAL:
-                if rd == 0:
-                    regfile[PC] += imm
+    #### not implemented instructions ####
+    if ins.opcode == Opcode.SYSTEM:
+        if ins == Ins.ECALL:
+            pass
+            print(f'ECALL: {regfile[PC]:08x}, {regfile[3]}')
+            if regfile[3] > 1:
+                raise Exception("test fail")
+            elif regfile[3] == 1:
+                print('pass')
+                return False    # test pass
             else:
-                raise Exception('dont know {opcode:07b}')
-
-        elif type == Type.I:
-            _, rd, funct3, rs1, imm = decode_ins(ins, Type.I)
-            funct3 = Funct3(funct3)
-            print(opcode, rd, funct3, rs1, imm)
-            if opcode == Op.IMMEDIATE:
-                if funct3 == Funct3.ADDI:
-                    regfile[rs1] = regfile[rs1] + sign_extend(imm, XLEN)
-                else:
-                    raise Exception(f"dont know funct3 {funct3}")
-            else:
-                raise Exception('dont know {opcode:07b}')
-
-        elif type == Type.B:
-            _, funct3, rs1, rs2, imm = decode_ins(ins, Type.B)
-            print(opcode, funct3, rs1, rs2, imm)
-            funct3 = Funct3(funct3)
-            if funct3 == Funct3.BNE:
-                if regfile[rs1] == regfile[rs2]:
-                    regfile[PC] += imm
-            else:
-                raise Exception('dont know {opcode:07b}')
-
-        elif type == Type.U:
-            _, rd, imm = decode_ins(ins, Type.U)
-
-            if opcode == Op.AUIPC:
-                regfile[rd] = imm << 12 + regfile[PC]
-
-            elif opcode == Op.LUI:
-                val = imm << 12 & 0xFFFFFFFF
-                print('val')
-                regfile[rd] 
-
-            else:
-                raise Exception('dont know {opcode:07b}')
-
+                pass
         else:
-            raise Exception("type not implemented")
+            print(f'{name} not implemented')
 
-    except Exception as e:
-        print(e)
-        dump_reg()
-        return False
+    elif ins == Ins.FENCE:
+        pass
+
+    #### branch instructions ####
+    elif ins == Ins.JAL:
+        if rd == 0:
+            regfile[rd] = regfile[PC] + 4
+            regfile[PC] += imm
+            print(f'new pc is {regfile[PC]:08x}')
+            return True
+        else:
+            raise Exception("cant decode JAL", ins)
+    elif ins == Ins.LUI:
+        regfile[rd] = (imm << 12) & 0xFFFFF000
+    elif ins == Ins.AUIPC:
+        # regfile[rd] = regfile[PC] + (imm << 12) & 0xFFFFF000
+        regfile[PC] += (imm << 12)
+    elif ins.opcode == Opcode.BRANCH:
+        do_branch = False
+        if ins == Ins.BEQ:
+            do_branch = regfile[rs1] == regfile[rs2]
+        elif ins == Ins.BNE:
+            do_branch = regfile[rs1] != regfile[rs2]
+        elif ins == Ins.BLT:
+            do_branch = sign_extend(regfile[rs1],32) < sign_extend(regfile[rs2],32)
+        elif ins == Ins.BGE:
+            do_branch = sign_extend(regfile[rs1],32) >= sign_extend(regfile[rs2],32)
+        elif ins == Ins.BLTU:
+            do_branch = regfile[rs1] < regfile[rs2]
+        elif ins == Ins.BGEU:
+            do_branch = regfile[rs1] >= regfile[rs2]
+        else:
+            raise Exception('branch not implemented')
+        if do_branch:
+            regfile[PC] += imm
+            print(f'new pc: {regfile[PC]:08x}')
+
+    #### immediate instructions ####
+    elif ins.opcode == Opcode.IMMEDIATE:
+        shamt = imm & 0x3F
+        if ins == Ins.ADDI:
+            regfile[rd] = (sign_extend(imm, 32) + regfile[rs1])
+        elif ins.opcode == Ins.SLLI.value.opcode:
+            regfile[rs1] = regfile[rd] << shamt
+        elif ins.opcode == Ins.SRLI.value.opcode and ins.funct7 == Ins.SRLI.value.funct7:
+            regfile[rs1] = regfile[rd] >> shamt
+        elif ins.opcode == Ins.SRAI.value.opcode and ins.funct7 == Ins.SRAI.value.funct7:
+            sign = regfile[rd] & (1 << 32)
+            regfile[rs1] = ((regfile[rd] & 0x7FFFFFFF) >> shamt) | sign
+        else:
+            raise Exception(f"funct3 {funct3:3b} not implemented")
+
+    #### arithmetic instructions ####
+    elif ins.opcode == Opcode.ARITH:
+        a, b = regfile[rs1], regfile[rs2]
+        ret  = 0
+        if ins == Ins.ADD:
+            ret = a + b
+        else:
+            print('not implemented!')
+        regfile[rd] = ret
+
+    else:
+        raise Exception(f"{ins.opcode:7b} not implemented")
 
     regfile[PC] += 0x4
     return True
+
 
 if __name__ == "__main__":
     for x in glob.glob('../isa/rv32ui-p-add'):
@@ -265,7 +208,12 @@ if __name__ == "__main__":
                 w32(s.header.p_paddr, s.data())
 
             inscount = 0
-            while step():
-                inscount += 1
+            try:
+                while step():
+                    inscount += 1
+            except Exception as e:
+                print('--- EXCEPTION ---')
+                print(e)
+                dump_reg()
             print(f"{x} end after {inscount} instructions")
         break
