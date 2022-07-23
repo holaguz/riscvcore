@@ -44,25 +44,18 @@ def r32(addr) -> int:
     addr -= 0x80000000
     # if addr % 4 != 0:
     #     raise Exception("no unaligned access")
-    assert addr >= 0 and addr <= len(mem) - 4, "out of bounds"
+    assert addr >= 0 and addr <= len(mem), "out of bounds"
     return struct.unpack("<I", mem[addr:addr+4])[0]
 
-def w32(addr, dat):
+def write(addr, dat):
     global mem
+    if(addr): addr -= 0x80000000
+    if not isinstance(dat, bytes): assert False, f'plz encode to bytes: {dat}'
 
-    if(addr):
-        addr -= 0x80000000
-
-    assert addr >= 0 and addr <= len(mem) - 0x4
-    if(addr < 0 or addr >= len(mem)):
-        raise Exception(f"out of bound exception: can't access {addr}")
-
-    if not isinstance(dat, bytes):
-        assert False, 'error?'
-        dat = struct.pack("<I", dat)
+    assert addr >= 0 and addr < len(mem), 'out of bounds!'
 
     d, l = len(dat), len(mem)
-    mem = mem[0:addr] + dat + mem[addr + d:]
+    mem = mem[:addr] + dat + mem[addr + d:]
     assert len(mem) == l
 
 def dump_reg():
@@ -84,13 +77,6 @@ def dump_reg():
         print(f"{name}: \t{val:08x}", end='\t')
     print()
 
-def dump_mem():
-    for i in range(len(mem) // 4):
-        word = struct.unpack("<I", mem[i:i+4])[0]
-        if 4*i % 0x80 == 0:
-            print(f'\n0x{4*i:04x}:')
-        print(f'{word:08x} ', end='\n' if i % 8 == 7 else '')
-
 STOP_AT = os.environ.get('D')
 
 def step() -> bool:
@@ -107,9 +93,9 @@ def step() -> bool:
     #instruction name
     try:
         name = [x for x in Ins if ins == x][0].name
-        print(f'{regfile[PC]:08x}, {name}, {ins}')
+        # print(f'{regfile[PC]:08x}, {name}, {ins}')
     except:
-        print(f'{regfile[PC]:08x}, unknown, {ins}')
+        # print(f'{regfile[PC]:08x}, unknown, {ins}')
         pass
 
     if str(hex(regfile[PC])) == STOP_AT:
@@ -176,21 +162,30 @@ def step() -> bool:
         val = 0
         addr = regfile[rs1] + sign_extend(imm, 12)
         if ins == Ins.LW:                   # load word
-            val = r32(addr) & 0xFFFFFFFF
-
+            val = r32(addr)
         elif ins == Ins.LH:                 # load halfword
-            val = sign_extend(r32(addr) & 0x0000FFFF, 16)
+            val = sign_extend(r32(addr) & 0xFFFF, 16)
         elif ins == Ins.LHU:                # load halfword unsigned
-            val = r32(addr) & 0x0000FFFF
-
+            val = r32(addr) & 0xFFFF
         elif ins == Ins.LB:                 # load byte
-            val = sign_extend(r32(addr) & 0x000000FF, 8)
+            val = sign_extend(r32(addr) & 0xFF, 8)
         elif ins == Ins.LBU:                # load byte unsigned
-            val = r32(addr) & 0x000000FF
+            val = r32(addr) & 0xFF
         regfile[rd] = val
 
+    ####  store instructions  ####
+    elif ins.opcode == Opcode.STORE:
+        addr = regfile[rs1] + sign_extend(imm, 12)
+        val = regfile[rs2]
+        if ins == Ins.SW:
+            write(addr, struct.pack('<I', val&0xFFFFFFFF))
+        elif ins == Ins.SH:
+            write(addr, struct.pack('H', val&0xFFFF))
+        elif ins == Ins.SB:
+            write(addr, struct.pack('B', val&0xFF))
+        else:
+            raise Exception(f'store funct3 {funct3} not implemented')
 
-    ####   arith instructions  ####
     elif ins.opcode == Opcode.IMMEDIATE:
         shamt = imm & 0x1F
         if ins == Ins.ADDI:
@@ -210,6 +205,11 @@ def step() -> bool:
             out = regfile[rs1] >> shamt
             out |= (0xFFFFFFFF * sign)<<(32-shamt)
             regfile[rd] = out
+
+        elif ins == Ins.SLTI:
+            regfile[rd] = sign_extend(regfile[rs1],32) < sign_extend(imm, 12)
+        elif ins == Ins.SLTIU:
+            regfile[rd] = regfile[rs1] < imm & 0xFFFFFFFF
         else:
             raise Exception(f"funct3 {funct3:3b} not implemented")
 
@@ -227,8 +227,21 @@ def step() -> bool:
             ret = a | b
         elif ins == Ins.XOR:
             ret = a ^ b
+        elif ins == Ins.SLL:
+            ret = a << (b&0x1f)
+        elif ins == Ins.SRL:
+            ret = a >> (b&0x1f)
+        elif ins == Ins.SRA:
+            b = b&(0x1f)
+            sign = a >> 31
+            ret = a >> b
+            ret |= (0xFFFFFFFF * sign)<<(32-b)
+        elif ins == Ins.SLT:
+            ret = sign_extend(a,32) < sign_extend(b,32)
+        elif ins == Ins.SLTU:
+            ret = (a < b)
         else:
-            raise Exception('not implemented!')
+            raise Exception(f'funct3 {funct3} not implemented!')
         regfile[rd] = ret
 
     else:
@@ -239,14 +252,15 @@ def step() -> bool:
 
 
 if __name__ == "__main__":
-    for x in glob.glob('../isa/rv32ui-p-l*'):
+    # for x in glob.glob('../isa/rv32ui-p-*'):
+    for x in glob.glob('../isa/rv32ui-p-*'):
         if x.endswith(('dump', 'fence_i')):
             continue
         with open(x, 'rb') as f:
             reset()
             e = ELFFile(f)
             for s in e.iter_segments():
-                w32(s.header.p_paddr, s.data())
+                write(s.header.p_paddr, s.data())
 
             inscount = 0
             try:
@@ -257,5 +271,4 @@ if __name__ == "__main__":
                 print(x, e)
                 dump_reg()
                 exit(0)
-                pass
             print(f"{x} end after {inscount} instructions")

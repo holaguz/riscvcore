@@ -87,11 +87,12 @@ class Instruction():
 
         if ins.type == Instruction.Type.J:
             imm = gb(31, 31, istring) << 20 | gb(30, 21, istring) << 1 | gb(20, 20, istring) << 11 | gb(19, 12, istring) << 12
-            imm = sign_extend(imm, 21)
+            imm = sign_extend(imm, 20)
             ret = Instruction(opcode = opcode, imm = imm, rd = rd)
 
         elif ins.type == Instruction.Type.U:
             imm = gb(31, 12, istring)# << 12
+            imm = sign_extend(imm, 20)
             ret = Instruction(opcode = opcode, imm = imm, rd = rd)
 
         elif ins.type == Instruction.Type.B:
@@ -100,13 +101,13 @@ class Instruction():
             ret = Instruction(opcode=opcode, imm=imm, rs1=rs1, rs2=rs2, funct3=funct3)
 
         elif ins.type == Instruction.Type.S:
-            imm = gb(4, 0, istring) | gb(31, 25) << 5
+            imm = sign_extend(gb(11, 7, istring) | gb(31, 25, istring) << 5, 12)
             ret = Instruction(opcode=opcode, imm=imm, rs1=rs1, rs2=rs2, funct3=funct3)
 
         elif ins.type == Instruction.Type.I:
             imm = sign_extend(gb(31, 20, istring), 12)
             ret = Instruction(opcode=opcode, rd=rd, funct3=funct3, rs1=rs1, imm=imm)
-        
+
         elif ins.type == Instruction.Type.WEIRDI:
             imm = sign_extend(gb(31, 20, istring), 12)
             ret = Instruction(opcode=opcode, rd=rd, funct3=funct3, funct7=funct7, rs1=rs1, imm=imm)
@@ -127,6 +128,9 @@ class Opcode(IntEnum):
     BRANCH      = 0b1100011
     LUI         = 0b0110111 # load upper immediate
     AUIPC       = 0b0010111 # add upper immediate to PC
+
+    LOAD        = 0b0000011
+    STORE       = 0b0100011
 
     ARITH       = 0b0110011
     SYSTEM      = 0b1110011 # control status register
@@ -157,6 +161,12 @@ class Ins(Enum):
     ORI     = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.I, funct3 = 0b110)
     ANDI    = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.I, funct3 = 0b111)
 
+    LB      = Instruction(opcode = Opcode.LOAD, type = Instruction.Type.I, funct3 = 0b000)
+    LH      = Instruction(opcode = Opcode.LOAD, type = Instruction.Type.I, funct3 = 0b001)
+    LW      = Instruction(opcode = Opcode.LOAD, type = Instruction.Type.I, funct3 = 0b010)
+    LBU     = Instruction(opcode = Opcode.LOAD, type = Instruction.Type.I, funct3 = 0b100)
+    LHU     = Instruction(opcode = Opcode.LOAD, type = Instruction.Type.I, funct3 = 0b101)
+
     # Weird I
     SLLI    = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.WEIRDI, funct3 = 0b001, funct7=0b0000000)
     SRLI    = Instruction(opcode = Opcode.IMMEDIATE, type = Instruction.Type.WEIRDI, funct3 = 0b101, funct7=0b0000000)
@@ -172,15 +182,19 @@ class Ins(Enum):
     CSRRSI  = Instruction(opcode = Opcode.SYSTEM, type=Instruction.Type.I, funct3 = 0b110)
     CSRRCI  = Instruction(opcode = Opcode.SYSTEM, type=Instruction.Type.I, funct3 = 0b111)
 
-    # R Type
+    # S Type
+    SB = Instruction(opcode=Opcode.STORE, type=Instruction.Type.S, funct3=0b000)
+    SH = Instruction(opcode=Opcode.STORE, type=Instruction.Type.S, funct3=0b001)
+    SW = Instruction(opcode=Opcode.STORE, type=Instruction.Type.S, funct3=0b010)
 
-    ADD     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R,       funct3 = 0b000, funct7=0b0000000)
-    SUB     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R,       funct3 = 0b000, funct7=0b0100000)
-    SLL     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R,       funct3 = 0b001, funct7=0b0000000)
-    SLT     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R,       funct3 = 0b010, funct7=0b0000000)
-    SLTU    = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R,       funct3 = 0b011, funct7=0b0000000)
-    XOR     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R,       funct3 = 0b100, funct7=0b0000000)
-    SRL     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R,       funct3 = 0b101, funct7=0b0000000)
-    SRA     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R,       funct3 = 0b101, funct7=0b0100000)
-    OR      = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R,       funct3 = 0b110, funct7=0b0000000)
-    AND     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R,       funct3 = 0b111, funct7=0b0000000)
+    # R Type
+    ADD     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R, funct3 = 0b000, funct7=0b0000000)
+    SUB     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R, funct3 = 0b000, funct7=0b0100000)
+    SLL     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R, funct3 = 0b001, funct7=0b0000000)
+    SLT     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R, funct3 = 0b010, funct7=0b0000000)
+    SLTU    = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R, funct3 = 0b011, funct7=0b0000000)
+    XOR     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R, funct3 = 0b100, funct7=0b0000000)
+    SRL     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R, funct3 = 0b101, funct7=0b0000000)
+    SRA     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R, funct3 = 0b101, funct7=0b0100000)
+    OR      = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R, funct3 = 0b110, funct7=0b0000000)
+    AND     = Instruction(opcode = Opcode.ARITH, type=Instruction.Type.R, funct3 = 0b111, funct7=0b0000000)
